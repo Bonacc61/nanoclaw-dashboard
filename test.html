@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test Page</title>
+</head>
+<body>
+  <h1>Test - If you see this, the page loads!</h1>
+  <div id="status">Checking WebSocket...</div>
+  <script>
+    document.getElementById('status').innerHTML = 'JavaScript is working!<br>';
+    try {
+      const ws = new WebSocket('ws://46.225.208.161:3006/events');
+      document.getElementById('status').innerHTML += 'WebSocket connection attempted...';
+      ws.onopen = () => {
+        document.getElementById('status').innerHTML += '<br>✅ WebSocket CONNECTED!';
+      };
+      ws.onerror = (err) => {
+        document.getElementById('status').innerHTML += '<br>❌ WebSocket ERROR: ' + err;
+      };
+    } catch (e) {
+      document.getElementById('status').innerHTML += '<br>❌ Exception: ' + e.message;
+    }
+  </script>
+</body>
+</html>

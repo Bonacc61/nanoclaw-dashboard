@@ -6,90 +6,144 @@ import {
 } from 'lucide-react'
 import './App.css'
 
-// Mock event generator for demonstration
-const generateEvent = () => {
-  const eventTypes = [
-    { type: 'channel:connected', icon: Wifi, color: '#10B981', channel: 'slack' },
-    { type: 'channel:connected', icon: Wifi, color: '#10B981', channel: 'whatsapp' },
-    { type: 'channel:error', icon: AlertCircle, color: '#EF4444', severity: 'warning' },
-    { type: 'channel:error', icon: XCircle, color: '#DC2626', severity: 'critical' },
-    { type: 'agent:invoked', icon: PlayCircle, color: '#3B82F6' },
-    { type: 'agent:completed', icon: CheckCircle2, color: '#10B981', status: 'success' },
-    { type: 'agent:completed', icon: XCircle, color: '#EF4444', status: 'error' },
-    { type: 'container:spawned', icon: Server, color: '#8B5CF6' },
-    { type: 'container:output', icon: MessageSquare, color: '#06B6D4' },
-    { type: 'container:closed', icon: Pause, color: '#6B7280' },
-    { type: 'ipc:processed', icon: GitBranch, color: '#F59E0B', authorized: true },
-    { type: 'ipc:processed', icon: AlertCircle, color: '#EF4444', authorized: false },
-    { type: 'system:shutdown', icon: XCircle, color: '#DC2626' },
-  ]
+// WebSocket connection configuration
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://46.225.208.161:3006/events'
 
-  const event = eventTypes[Math.floor(Math.random() * eventTypes.length)]
-  return {
-    ...event,
-    timestamp: new Date().toISOString(),
-    id: Math.random().toString(36).substr(2, 9),
-    groupFolder: ['main', 'sourcerer', 'olorin', 'jarvis'][Math.floor(Math.random() * 4)]
-  }
+// Event type to icon/color mapping
+const EVENT_CONFIG = {
+  'channel:connected': { icon: Wifi, color: '#10B981' },
+  'channel:error': { icon: AlertCircle, color: '#EF4444' },
+  'channel:disconnected': { icon: WifiOff, color: '#6B7280' },
+  'agent:invoked': { icon: PlayCircle, color: '#3B82F6' },
+  'agent:completed': { icon: CheckCircle2, color: '#10B981' },
+  'container:spawned': { icon: Server, color: '#8B5CF6' },
+  'container:output': { icon: MessageSquare, color: '#06B6D4' },
+  'container:closed': { icon: Pause, color: '#6B7280' },
+  'ipc:processed': { icon: GitBranch, color: '#F59E0B' },
+  'system:shutdown': { icon: XCircle, color: '#DC2626' },
 }
 
 function App() {
   const [events, setEvents] = useState([])
   const [stats, setStats] = useState({
     total: 0,
-    channels: { connected: 2, errored: 0 },
+    channels: { connected: 0, errored: 0 },
     agents: { active: 0, completed: 0 },
     containers: { running: 0, total: 0 }
   })
   const [isLive, setIsLive] = useState(true)
+  const [wsConnected, setWsConnected] = useState(false)
   const eventsEndRef = useRef(null)
+  const wsRef = useRef(null)
 
+  // WebSocket connection
   useEffect(() => {
-    if (!isLive) return
+    if (!isLive) {
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
+      setWsConnected(false)
+      return
+    }
 
-    // Generate initial events
-    const initialEvents = Array(5).fill(null).map(() => generateEvent())
-    setEvents(initialEvents)
+    // Connect to WebSocket
+    const ws = new WebSocket(WS_URL)
+    wsRef.current = ws
 
-    const interval = setInterval(() => {
-      const newEvent = generateEvent()
-      setEvents(prev => [newEvent, ...prev].slice(0, 50))
+    ws.onopen = () => {
+      console.log('WebSocket connected')
+      setWsConnected(true)
+    }
 
-      // Update stats
-      setStats(prev => {
-        const newStats = { ...prev, total: prev.total + 1 }
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data)
 
-        if (newEvent.type.startsWith('channel:')) {
-          if (newEvent.type === 'channel:connected') {
-            newStats.channels.connected++
-          } else if (newEvent.type === 'channel:error') {
-            newStats.channels.errored++
-          }
+        // Skip connection/pong messages
+        if (message.type === 'connected' || message.type === 'pong') {
+          console.log('WebSocket:', message.type)
+          return
         }
 
-        if (newEvent.type.startsWith('agent:')) {
-          if (newEvent.type === 'agent:invoked') {
-            newStats.agents.active++
-          } else if (newEvent.type === 'agent:completed') {
-            newStats.agents.active = Math.max(0, newStats.agents.active - 1)
-            newStats.agents.completed++
-          }
+        // Get event config
+        const config = EVENT_CONFIG[message.type]
+        if (!config) {
+          console.warn('Unknown event type:', message.type)
+          return
         }
 
-        if (newEvent.type.startsWith('container:')) {
-          if (newEvent.type === 'container:spawned') {
-            newStats.containers.running++
-            newStats.containers.total++
-          } else if (newEvent.type === 'container:closed') {
-            newStats.containers.running = Math.max(0, newStats.containers.running - 1)
-          }
+        // Create event object
+        const newEvent = {
+          id: Math.random().toString(36).substring(2, 9),
+          type: message.type,
+          timestamp: message.timestamp,
+          icon: config.icon,
+          color: config.color,
+          ...message.data
         }
 
-        return newStats
-      })
-    }, 1500) // New event every 1.5 seconds
+        // Add to events list
+        setEvents(prev => [newEvent, ...prev].slice(0, 100))
 
-    return () => clearInterval(interval)
+        // Update stats
+        setStats(prev => {
+          const newStats = { ...prev, total: prev.total + 1 }
+
+          if (message.type.startsWith('channel:')) {
+            if (message.type === 'channel:connected') {
+              newStats.channels.connected++
+            } else if (message.type === 'channel:error') {
+              newStats.channels.errored++
+            }
+          }
+
+          if (message.type.startsWith('agent:')) {
+            if (message.type === 'agent:invoked') {
+              newStats.agents.active++
+            } else if (message.type === 'agent:completed') {
+              newStats.agents.active = Math.max(0, newStats.agents.active - 1)
+              newStats.agents.completed++
+            }
+          }
+
+          if (message.type.startsWith('container:')) {
+            if (message.type === 'container:spawned') {
+              newStats.containers.running++
+              newStats.containers.total++
+            } else if (message.type === 'container:closed') {
+              newStats.containers.running = Math.max(0, newStats.containers.running - 1)
+            }
+          }
+
+          return newStats
+        })
+      } catch (error) {
+        console.error('Failed to parse WebSocket message:', error)
+      }
+    }
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error)
+      setWsConnected(false)
+    }
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected')
+      setWsConnected(false)
+    }
+
+    // Ping interval to keep connection alive
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }))
+      }
+    }, 30000)
+
+    return () => {
+      clearInterval(pingInterval)
+      ws.close()
+    }
   }, [isLive])
 
   return (
@@ -104,13 +158,17 @@ function App() {
               <p className="subtitle">Real-time event bus monitoring</p>
             </div>
           </div>
-          <button
-            className={`live-button ${isLive ? 'live' : 'paused'}`}
-            onClick={() => setIsLive(!isLive)}
-          >
-            {isLive ? <Radio size={16} /> : <Pause size={16} />}
-            {isLive ? 'LIVE' : 'PAUSED'}
-          </button>
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            {wsConnected && <span style={{ color: '#10B981', fontSize: '0.875rem', fontFamily: 'Fira Code' }}>● Connected</span>}
+            {!wsConnected && isLive && <span style={{ color: '#EF4444', fontSize: '0.875rem', fontFamily: 'Fira Code' }}>● Connecting...</span>}
+            <button
+              className={`live-button ${isLive ? 'live' : 'paused'}`}
+              onClick={() => setIsLive(!isLive)}
+            >
+              {isLive ? <Radio size={16} /> : <Pause size={16} />}
+              {isLive ? 'LIVE' : 'PAUSED'}
+            </button>
+          </div>
         </div>
       </header>
 
